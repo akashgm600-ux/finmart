@@ -1,0 +1,64 @@
+name: Finmart CI & Security Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-and-scan:
+    runs-on: ubuntu-latest
+
+    services:
+      # If your Django app needs a DB to run tests, GitHub provisions it automatically here
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: finmart_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 1. RUN YOUR CODE TESTS
+      - name: Run Django Tests
+        env:
+          DB_HOST: localhost
+          DB_PASSWORD: password
+        run: |
+          python manage.py test
+
+      # 2. SAST SCAN (Static Application Security Testing)
+      - name: Run Semgrep SAST Scan
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" returntocorp/semgrep semgrep --config=auto --error
+
+      # 3. SCA SCAN (Software Composition Analysis / Third-Party Vulnerabilities)
+      - name: Run Trivy Dependency Vulnerability Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1' # This will intentionally fail the pipeline if a dangerous security hole is found
